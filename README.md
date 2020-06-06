@@ -7,7 +7,10 @@ The intention is to provide teams with insights about how their development proc
 These scripts use GitHub's v4 GraphQL API to gather data for the desired organization.
 
 ### Current status
-It's very much work in progress. At the moment 
+It's very much work in progress. At the moment there's no out of the box way to get good stats for your organization, only raw data:
+
+- All repositories in the given organization
+- All pull requests in the given organization
 
 ## Usage
 The following environment variables are needed:
