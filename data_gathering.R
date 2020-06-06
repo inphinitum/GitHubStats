@@ -225,6 +225,16 @@ getPullRequests <- function(client) {
   pullRequestDf
 }
 
+## writeDataToDisk(dataframe, filename)
+##
+## Input:
+## - dataframe: data.frame to be written to disk
+## - filename: base name for the file
+##
+## Output:
+##
+## Writes the given dataframe to disk in csv format taking the base filename and adding the date and time.
+##
 writeDataToDisk <- function(dataframe, filename) {
   path <- file.path(getwd(), "data")
   if(!dir.exists(path))
@@ -233,4 +243,41 @@ writeDataToDisk <- function(dataframe, filename) {
   filename <- paste(filename, "-", Sys.time(), ".csv", sep = "")
   
   write.csv(dataframe, file.path(path, filename))
+}
+
+## writePullRequestData(dataframe, filename)
+##
+## Input:
+##
+## Output:
+##
+## Writes pullRequestDf to disk, creating the "data" folder in the working directory if necessary.
+## It creates a file with the following format: pullRequests-DATE TIME.csv
+##
+writePullRequestData <- function() {
+  writeDataToDisk(pullRequestDf, "pullRequests")
+}
+
+## readLatestPullRequestData()
+##
+## Input:
+##
+## Output:
+## - data.frame with the read data if it exists, NULL otherwise.
+##
+## Reads the latest pull request data from the "data" directory and returns it in a data.frame.
+##
+readLatestPullRequestData <- function() {
+  pullRequestDf <- NULL
+  
+  path <- file.path(getwd(), "data")
+  if(dir.exists(path)) {
+    files <- list.files(path, "pullRequests.*[.]csv")
+    
+    if(length(files) > 0) {
+      print(paste("Reading", file.path(path, files[1]), "from disk..."))
+      pullRequestDf <- read.csv(file.path(path, files[1]))
+    }
+  }
+  pullRequestDf
 }
