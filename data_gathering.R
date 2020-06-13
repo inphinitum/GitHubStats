@@ -16,12 +16,18 @@ getGHConnection <- function() {
     url <- "https://api.github.com/graphql",
     headers = list(Authorization = paste0("Bearer ", token))
   )
-  con$load_schema()
   
-  if(con$ping())
+  if(con$ping()) {
+    cat("Connection test OK!\n")
+    cat("Reading GitHub API schema...\n")
+    
+    con$load_schema()
     con
-  else
+  }
+  else {
+    cat("ERROR: Connection test failed!\n")
     NULL
+  }
 }
 
 ## createqueries()
@@ -74,6 +80,7 @@ createQueries <- function() {
       pullRequests(first:$pageSize) {
         nodes {
           id
+          state
           createdAt
           closedAt
           author {
@@ -97,6 +104,7 @@ createQueries <- function() {
       pullRequests(first:$pageSize, after:$after) {
         nodes {
           id
+          state
           createdAt
           closedAt
           author {
@@ -168,6 +176,7 @@ getRepositories <- function(client) {
 ## Output:
 ## - data.frame with following variables:
 ##   - pullRequestId: Unique identifier of the pull request
+##   - state:         State of the PR: CLOSED, MERGED, OPEN
 ##   - createdAt:     Date of creation
 ##   - closedAt:      Date of closure
 ##   - author:        GitHub login of the pull request author
@@ -181,14 +190,14 @@ getPullRequests <- function(client) {
   pageSize      <- 100
   pullRequestDf <- data.frame()
   
-  print(paste("Gathering repositories for", organization, "..."))
+  cat("Gathering repositories for '", organization, "'...\n", sep = "")
   repositoriesDf <- getRepositories(client)
   
   # Gather all graphql queries, separated for clarity
   queries <- createQueries()
   
   for(repo in repositoriesDf$repoName) {
-    cat(paste("Processing repository", repo))
+    cat("Processing repository '", repo, "'", sep = "")
     
     variables <- list(repo = repo, login = organization, pageSize = pageSize)
     rsp <- client$exec(queries$queries$pullRequestsInRepoFirstPage, variables)
@@ -198,6 +207,7 @@ getPullRequests <- function(client) {
     endCursor        <- rsp$data$repository$pullRequests$pageInfo$endCursor
     pullRequestDf    <- rbind(pullRequestDf,
                               data.frame(rsp$data$repository$pullRequests$nodes$id,
+                                         rsp$data$repository$pullRequests$nodes$state,
                                          rsp$data$repository$pullRequests$nodes$createdAt,
                                          rsp$data$repository$pullRequests$nodes$closedAt,
                                          rsp$data$repository$pullRequests$nodes$author$login,
@@ -213,6 +223,7 @@ getPullRequests <- function(client) {
       endCursor        <- rsp$data$repository$pullRequests$pageInfo$endCursor
       pullRequestDf    <- rbind(pullRequestDf,
                                 data.frame(rsp$data$repository$pullRequests$nodes$id,
+                                           rsp$data$repository$pullRequests$nodes$state,
                                            rsp$data$repository$pullRequests$nodes$createdAt,
                                            rsp$data$repository$pullRequests$nodes$closedAt,
                                            rsp$data$repository$pullRequests$nodes$author$login,
@@ -221,7 +232,7 @@ getPullRequests <- function(client) {
     cat(" Done!\n")
   }
   
-  colnames(pullRequestDf) <- c('pullRequestId', 'createdAt', 'closedAt', 'author', 'repoName')
+  colnames(pullRequestDf) <- c('pullRequestId', 'state', 'createdAt', 'closedAt', 'author', 'repoName')
   pullRequestDf
 }
 
@@ -248,13 +259,14 @@ writeDataToDisk <- function(dataframe, filename) {
 ## writePullRequestData(dataframe, filename)
 ##
 ## Input:
+## - Dataframe with pull request info
 ##
 ## Output:
 ##
 ## Writes pullRequestDf to disk, creating the "data" folder in the working directory if necessary.
 ## It creates a file with the following format: pullRequests-DATE TIME.csv
 ##
-writePullRequestData <- function() {
+writePullRequestData <- function(pullRequestDf) {
   writeDataToDisk(pullRequestDf, "pullRequests")
 }
 
@@ -265,19 +277,37 @@ writePullRequestData <- function() {
 ## Output:
 ## - data.frame with the read data if it exists, NULL otherwise.
 ##
-## Reads the latest pull request data from the "data" directory and returns it in a data.frame.
+## Reads the latest pull request data from the "data" directory  if it's up to date, otherwise it reads
+## directly from GitHub, and returns it in a data.frame.
 ##
 readLatestPullRequestData <- function() {
   pullRequestDf <- NULL
   
+  startTime <- Sys.time()
   path <- file.path(getwd(), "data")
   if(dir.exists(path)) {
-    files <- list.files(path, "pullRequests.*[.]csv")
+    files <- sort(list.files(path, "pullRequests.*[.]csv"), decreasing = TRUE)
     
-    if(length(files) > 0) {
-      print(paste("Reading", file.path(path, files[1]), "from disk..."))
+    if(length(files) > 0 & date(file.info(file.path(path, files[1]))$ctime) == Sys.Date()) {
+      cat(paste("Cached is up to date, reading pull request data from", file.path(path, files[1]), "\n"))
       pullRequestDf <- read.csv(file.path(path, files[1]))
+      pullRequestDf <- pullRequestDf[, 2:7]
+    }
+    else {
+      cat("Cached data is outdated, reading pull request data from GitHub\n")
+      client <- getGHConnection()
+      pullRequestDf <- getPullRequests(client)
+      writePullRequestData(pullRequestDf)
     }
   }
+  else {
+    cat("No cached data available, reading pull request data from GitHub\n")
+    client <- getGHConnection()
+    pullRequestDf <- getPullRequests(client)
+    writePullRequestData(pullRequestDf)
+  }
+  
+  endTime <- Sys.time()
+  cat("Gathering pull request information took", endTime - startTime, "\n")
   pullRequestDf
 }
