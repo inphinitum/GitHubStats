@@ -50,6 +50,8 @@ createQueries <- function() {
       repositories(orderBy: {field:PUSHED_AT,direction:DESC}, isLocked:false, first:$pageSize) {
         nodes {
           name
+          isArchived
+          isDisabled
         }
         pageInfo {
           hasNextPage
@@ -65,6 +67,8 @@ createQueries <- function() {
       repositories(orderBy: {field:PUSHED_AT,direction:DESC}, isLocked:false, first:$pageSize, after:$after) {
         nodes {
           name
+          isArchived
+          isDisabled
         }
         pageInfo {
           hasNextPage
@@ -122,7 +126,34 @@ createQueries <- function() {
     }
   }')
   
+  qry$query('teams',
+            'query teams($login: String!, $pageSize: Int!) {
+               organization(login:$login) {
+                 teams (first:$pageSize) {
+                   nodes {
+                     name
+                   }
+                   pageInfo {
+                     hasNextPage
+                     endCursor
+                   }
+                 }
+               }
+            }')
+  
   qry
+}
+
+getTeams <- function(client) {
+  organization <- Sys.getenv("GITHUB_ORG")
+  pageSize     <- 100
+  
+  # Get all GraphQL queries. Separated for simplicity.
+  queries <- createQueries()
+  
+  variables <- list(login = organization, pageSize = pageSize)
+  rsp <- client$exec(queries$queries$teams, variables)
+  rsp <- jsonlite::fromJSON(rsp)
 }
 
 ## getRepositories(GraphqlClient client)
@@ -151,7 +182,9 @@ getRepositories <- function(client) {
   # Gather pagination data to see if we need to keep collecting repo info, and content of first page
   moreRepos     <- rsp$data$organization$repositories$pageInfo$hasNextPage
   repoEndCursor <- rsp$data$organization$repositories$pageInfo$endCursor
-  repositoryDf  <- data.frame(rsp$data$organization$repositories$nodes$name)
+  repositoryDf  <- data.frame(rsp$data$organization$repositories$nodes$name,
+                              rsp$data$organization$repositories$nodes$isArchived,
+                              rsp$data$organization$repositories$nodes$isDisabled)
   
   # Keep collecting repos in following pages, and append results
   while(moreRepos) {
@@ -161,11 +194,16 @@ getRepositories <- function(client) {
     
     moreRepos     <- rsp$data$organization$repositories$pageInfo$hasNextPage
     repoEndCursor <- rsp$data$organization$repositories$pageInfo$endCursor
-    repositoryDf  <- rbind(repositoryDf, data.frame(rsp$data$organization$repositories$nodes$name))
+    repositoryDf  <- rbind(repositoryDf, data.frame(rsp$data$organization$repositories$nodes$name,
+                                                    rsp$data$organization$repositories$nodes$isArchived,
+                                                    rsp$data$organization$repositories$nodes$isDisabled))
   }
   
-  colnames(repositoryDf) <- c("repoName")
-  repositoryDf
+  
+  colnames(repositoryDf) <- c("repoName", "isArchived", "isDisabled")
+  repositoryDf %>%
+    filter(isArchived == FALSE, isDisabled == FALSE) %>%
+    select(c(repoName))
 }
 
 ## getPullRequests(GraphQLClient)
@@ -273,6 +311,7 @@ writePullRequestData <- function(pullRequestDf) {
 ## readLatestPullRequestData()
 ##
 ## Input:
+## - forceAPIUpdate Boolean, whether to force reading from GitHub even if data exists for the current day.
 ##
 ## Output:
 ## - data.frame with the read data if it exists, NULL otherwise.
@@ -280,7 +319,7 @@ writePullRequestData <- function(pullRequestDf) {
 ## Reads the latest pull request data from the "data" directory  if it's up to date, otherwise it reads
 ## directly from GitHub, and returns it in a data.frame.
 ##
-readLatestPullRequestData <- function() {
+readLatestPullRequestData <- function(forceAPIUpdate = FALSE) {
   pullRequestDf <- NULL
   
   startTime <- Sys.time()
@@ -288,7 +327,7 @@ readLatestPullRequestData <- function() {
   if(dir.exists(path)) {
     files <- sort(list.files(path, "pullRequests.*[.]csv"), decreasing = TRUE)
     
-    if(length(files) > 0 & date(file.info(file.path(path, files[1]))$ctime) == Sys.Date()) {
+    if(!forceAPIUpdate & length(files) > 0 & date(file.info(file.path(path, files[1]))$ctime) == Sys.Date()) {
       cat(paste("Cached is up to date, reading pull request data from", file.path(path, files[1]), "\n"))
       pullRequestDf <- read.csv(file.path(path, files[1]))
       pullRequestDf <- pullRequestDf[, 2:7]
